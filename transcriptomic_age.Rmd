@@ -1,0 +1,93 @@
+---
+title: "Transcriptomic Age Analysis in Behcet Disease"
+author: "MSS Genomics Group"
+date: "2023-06-05"
+output: html_document
+---
+
+Install and load required packages.
+
+```{r message=FALSE}
+# library(devtools)
+# install_github('sinhrks/ggfortify')
+library(ggfortify)
+library(tidyverse)
+library(ggpubr)
+# BiocManager::install("RNAAgeCalc")
+library(RNAAgeCalc)
+```
+
+Load the Behcet disease data.
+
+```{r}
+demo_counts <- read.csv("https://raw.githubusercontent.com/mss-genomics/aging-signature/main/GSE205867_count_matrix.csv") # Read count matrix data from CSV file
+rownames(demo_counts) <- demo_counts[,1]  # Assign the first column as row names
+demo_counts2 <- demo_counts[,-1]  # Remove the first column (assuming it contains row names)
+as_tibble(demo_counts)
+```
+
+```{r}
+demo_pheno <- read.csv("https://raw.githubusercontent.com/mss-genomics/aging-signature/main/GSE205867_sample_info.csv") # Read sample information from CSV file
+as_tibble(demo_pheno)
+```
+
+Calculate predicted transcriptional age using 7 different signatures and fit linear regression between predicted age and chronological age for each model.
+
+```{r message=FALSE, warning=FALSE}
+signatures <- c("DESeq2","Pearson","Dev","deMagalhaes","GenAge","GTExAge","Peters")
+for (signature in signatures) {
+  demo_clocks <- predict_age(exprdata = demo_counts2, tissue = "blood", 
+                                exprtype = "counts", 
+                                idtype = "ENSEMBL",
+                                signature = signature,
+                                chronage = demo_pheno) # Calculate predicted age using RNAAgeCalc package
+  names(demo_clocks)[names(demo_clocks) == "RNAAge"] <- "age" # Rename the predicted age column
+  lm<-lm(age ~ ChronAge, demo_clocks) # Fit a linear regression model between predicted age and chronological age
+  resid<-lm$residuals # Select the residuals of the model
+  demo_clocks <- demo_clocks[,-2] # Remove the ChronAge column
+  age<-demo_clocks
+  demo_pheno <- cbind(demo_pheno,age,resid)
+  age <- paste("age",signature,sep="") # Create a name for the predicted age column
+  resid <- paste("resid",signature,sep="") # Create a name for the residual column
+  colnames(demo_pheno)[ncol(demo_pheno)-1] <- age # Rename predicted age column
+  colnames(demo_pheno)[ncol(demo_pheno)] <- resid # Rename residual column
+}
+as_tibble(demo_pheno)
+```
+
+Perform principal component analysis for predicted ages calculated using the 7 signatures.
+
+```{r}
+demo_pca <- prcomp(demo_pheno[,c(14,16,18,20,22,24,26)],
+                   center = TRUE,
+                   scale. = TRUE)  # Perform PCA on a subset of columns in demo_pheno
+summary(demo_pca)  # Print summary statistics of the PCA results
+```
+
+Plot the PCA results for Behcet disease samples and controls.
+
+```{r}
+demo_pca_plot <- autoplot(demo_pca,
+                          data = demo_pheno,
+                          colour = 'Group')  # Create a PCA plot using ggfortify package
+demo_pca_plot
+```
+
+Compare mean residual from calculated age using GTExAge signature for Behcet disease vs. controls.
+
+```{r}
+# Analysis - T-test plot
+ggboxplot(demo_pheno, x = "Group", y = "residGTExAge",
+          color = "Group", palette = "jco",
+          add = "jitter") + stat_compare_means(method = "t.test")  # Create a boxplot with t-test comparison using ggpubr package
+```
+
+Plot correlation between predicted age calculated using Dev signature and chronological age.
+
+```{r}
+# Analysis - Pearson correlation plot
+ggscatter(demo_pheno, x = "age", y = "ageDev",
+          add = "reg.line",  # Add regression line
+          add.params = list(color = "blue", fill = "lightgray"),  # Customize regression line
+          conf.int = TRUE) + stat_cor(method = "pearson", label.x = 3, label.y = 30)  # Create a scatter plot with Pearson correlation using ggpub
+```
